@@ -404,10 +404,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-```
-eof
-
-### How to use your new features:
-*   **The PIN:** When you reload your live app, it will ask for a PIN. Type **`1234`** to unlock it. (If you want to change it, look at line 14 in the code `APP_PIN = "1234"` and change the numbers before committing to GitHub!).
-*   **Partial Payments:** Go to the Dashboard, select a friend who owes you money under "Quick Settle Up", click **Partial Payment**, and type in the amount they handed you. It will automatically subtract from their total!
-*   **Bar Chart:** As soon as you add some debts, you will see a red bar chart auto-generate on the dashboard so you can see who the biggest culprit is visually!
