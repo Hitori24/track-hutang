@@ -1,8 +1,9 @@
 """
-Personal Expense Manager (Ultimate Edition v2)
+Personal Expense Manager (Ultimate Edition v3)
 ==============================================
 Features: PIN Protection, Visual Charts, Partial Payments, 
-Friend Deletion, Timestamps, and WhatsApp Auto-Reminders.
+Friend Deletion, Timestamps, WhatsApp Auto-Reminders, 
+and Two-Way Debt Tracking (Money you owe others).
 """
 
 import json
@@ -56,7 +57,10 @@ def persist_state():
 # Balance logic
 # --------------------------------------------------------------------------
 def calculate_balance(data: dict, friend: str) -> float:
-    """Total amount `friend` currently owes the user."""
+    """
+    Total amount `friend` currently owes the user.
+    If positive, they owe user. If negative, user owes them.
+    """
     direct_total = sum(
         d["amount"] for d in data["direct_debts"]
         if d["friend"] == friend and not d.get("settled", False)
@@ -67,18 +71,19 @@ def calculate_balance(data: dict, friend: str) -> float:
     )
     return round(direct_total + split_total, 2)
 
-def friend_breakdown(data: dict, friend: str) -> list[tuple[str, float, str]]:
-    """Line items behind a friend's balance including dates."""
-    items = [
-        (d["desc"] or "Direct debt", d["amount"], d.get("date", "Unknown date"))
-        for d in data["direct_debts"]
-        if d["friend"] == friend and not d.get("settled", False)
-    ]
-    items += [
-        (s["description"] or "Group expense", s["share_per_person"], s.get("date", "Unknown date"))
-        for s in data["group_splits"]
-        if not s.get("settled", False) and friend in s.get("debtors", [])
-    ]
+def friend_breakdown(data: dict, friend: str) -> list[tuple[str, float, str, str]]:
+    """Line items behind a friend's balance including dates and transaction type."""
+    items = []
+    for d in data["direct_debts"]:
+        if d["friend"] == friend and not d.get("settled", False):
+            # Fallback for old data without 'type'
+            ttype = d.get("type", "lent" if d["amount"] >= 0 else "payment_received")
+            items.append((d["desc"] or "Direct debt", d["amount"], d.get("date", "Unknown date"), ttype))
+            
+    for s in data["group_splits"]:
+        if not s.get("settled", False) and friend in s.get("debtors", []):
+            items.append((s["description"] or "Group expense", s["share_per_person"], s.get("date", "Unknown date"), "split"))
+            
     return items
 
 def settle_friend(data: dict, friend: str) -> None:
@@ -92,14 +97,26 @@ def settle_friend(data: dict, friend: str) -> None:
             if not s["debtors"]:
                 s["settled"] = True
 
-def record_partial_payment(data: dict, friend: str, amount: float) -> None:
-    """Record a partial repayment as a negative debt to reduce the balance."""
+def record_partial_payment(data: dict, friend: str, amount: float, is_user_paying: bool) -> None:
+    """Record a partial repayment to reduce the balance."""
+    if is_user_paying:
+        # User pays friend -> positive amount to offset negative balance
+        val = abs(amount)
+        ttype = "payment_made"
+        desc = "I paid them back (Partial)"
+    else:
+        # Friend pays user -> negative amount to offset positive balance
+        val = -abs(amount)
+        ttype = "payment_received"
+        desc = "They paid me back (Partial)"
+        
     data["direct_debts"].append({
         "friend": friend,
-        "amount": -abs(amount), # Negative amount acts as a payment
-        "desc": "Repayment / Partial Settle",
+        "amount": val,
+        "desc": desc,
         "settled": False,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "type": ttype
     })
 
 # --------------------------------------------------------------------------
@@ -113,18 +130,24 @@ def page_dashboard(data: dict) -> None:
         return
 
     balances = {friend: calculate_balance(data, friend) for friend in data["friends"]}
-    total_owed = round(sum(balances.values()), 2)
-
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.metric("Total owed to you", f"RM {total_owed:.2f}")
     
-    # 📊 VISUAL CHART
-    active_balances = {k: v for k, v in balances.items() if v > 0}
-    if active_balances:
-        with col2:
-            st.caption("Debt Distribution")
-            st.bar_chart(active_balances, height=150, color="#FF4B4B")
+    total_receivable = sum(b for b in balances.values() if b > 0)
+    total_payable = sum(abs(b) for b in balances.values() if b < 0)
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        st.metric("You are owed (Incoming)", f"RM {total_receivable:.2f}")
+    with col2:
+        st.metric("You owe (Outgoing)", f"RM {total_payable:.2f}")
+    
+    # 📊 VISUAL CHART (Only show incoming debts for the chart)
+    active_incoming = {k: v for k, v in balances.items() if v > 0}
+    if active_incoming:
+        with col3:
+            st.bar_chart(active_incoming, height=150, color="#FF4B4B")
+    else:
+        with col3:
+            st.caption("No incoming debts to display.")
 
     st.divider()
 
@@ -134,28 +157,54 @@ def page_dashboard(data: dict) -> None:
             with col_a:
                 st.error(f"🔴  **{friend}** owes you **RM {balance:.2f}**")
                 with st.expander(f"Breakdown for {friend}"):
-                    for desc, amount, date in friend_breakdown(data, friend):
-                        st.write(f"• **{desc}** (_{date}_) — RM {amount:.2f}")
+                    for desc, amount, date, ttype in friend_breakdown(data, friend):
+                        if ttype in ["lent", "split"]:
+                            st.write(f"• 🔴 Lent: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
+                        elif ttype == "payment_received":
+                            st.write(f"• 🟢 Received: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
             with col_b:
                 msg = f"Hey {friend}! Just a friendly reminder about the RM {balance:.2f} outstanding balance. Thanks! 🙏"
                 wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
                 st.markdown(f"[💬 Remind via WA]({wa_url})")
+                
         elif balance < 0:
-            st.warning(f"🟡  You owe **{friend}** **RM {abs(balance):.2f}**")
-        else:
-            st.success(f"✅  **{friend}** is all clear")
+            col_a, col_b = st.columns([3, 1])
+            with col_a:
+                st.warning(f"🟡  You owe **{friend}** **RM {abs(balance):.2f}**")
+                with st.expander(f"Breakdown for {friend}"):
+                    for desc, amount, date, ttype in friend_breakdown(data, friend):
+                        if ttype == "borrowed":
+                            st.write(f"• 🟡 Borrowed: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
+                        elif ttype == "payment_made":
+                            st.write(f"• 🟢 Paid: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
+            with col_b:
+                st.caption("Don't forget to pay them back! 💸")
+                
+        elif balance == 0 and calculate_balance(data, friend) == 0:
+            # Check if there's history but balance is 0
+            if friend_breakdown(data, friend):
+                st.success(f"✅  **{friend}** is all clear")
 
     st.divider()
     
     st.subheader("🤝 Quick Settle Up")
-    debtors = [f for f, b in balances.items() if b > 0]
+    active_friends = [f for f, b in balances.items() if round(b, 2) != 0.00]
 
-    if not debtors:
-        st.caption("Nobody owes you anything right now.")
+    if not active_friends:
+        st.caption("All balances are settled right now.")
         return
 
-    # FIXED: Removed st.form here so the UI dynamically shows the amount input!
-    friend_to_settle = st.selectbox("Select friend", debtors)
+    friend_to_settle = st.selectbox("Select friend to settle with", active_friends)
+    bal = balances[friend_to_settle]
+    
+    is_user_paying = False
+    if bal > 0:
+        st.info(f"**{friend_to_settle}** owes you **RM {bal:.2f}**")
+        is_user_paying = False
+    else:
+        st.info(f"You owe **{friend_to_settle}** **RM {abs(bal):.2f}**")
+        is_user_paying = True
+
     settle_type = st.radio("Payment Type", ["Full Settle", "Partial Payment"])
     
     partial_amount = 0.0
@@ -167,8 +216,8 @@ def page_dashboard(data: dict) -> None:
             settle_friend(data, friend_to_settle)
             st.toast(f"All settled up with {friend_to_settle}!", icon="✅")
         else:
-            record_partial_payment(data, friend_to_settle, partial_amount)
-            st.toast(f"Recorded RM {partial_amount:.2f} repayment from {friend_to_settle}.", icon="✅")
+            record_partial_payment(data, friend_to_settle, partial_amount, is_user_paying)
+            st.toast(f"Recorded RM {partial_amount:.2f} repayment.", icon="✅")
         
         persist_state()
         st.rerun()
@@ -203,7 +252,6 @@ def page_manage_friends(data: dict) -> None:
             with col1:
                 st.write(f"• {friend}")
             with col2:
-                # Calculate balance to check if deletion is allowed
                 bal = calculate_balance(data, friend)
                 if bal == 0:
                     if st.button("🗑️ Delete", key=f"del_{friend}"):
@@ -221,7 +269,8 @@ def page_add_debt(data: dict) -> None:
         return
 
     with st.form("add_debt_form", clear_on_submit=True):
-        friend = st.selectbox("Who owes you?", data["friends"])
+        debt_type = st.radio("Transaction Type", ["I lent them money ➡️", "I borrowed from them ⬅️"])
+        friend = st.selectbox("Friend:", data["friends"])
         amount = st.number_input("Amount (RM)", min_value=0.0, step=0.01, format="%.2f")
         desc = st.text_input("Description", placeholder="e.g. Borrowed petrol cash")
         submitted = st.form_submit_button("Add Debt")
@@ -230,16 +279,25 @@ def page_add_debt(data: dict) -> None:
         if amount <= 0:
             st.warning("Amount must be greater than zero.")
         else:
-            rounded = round(amount, 2)
+            if debt_type == "I borrowed from them ⬅️":
+                val = -abs(round(amount, 2))
+                ttype = "borrowed"
+                success_msg = f"Recorded that you owe RM {abs(val):.2f} to {friend}."
+            else:
+                val = abs(round(amount, 2))
+                ttype = "lent"
+                success_msg = f"Recorded RM {val:.2f} owed by {friend}."
+
             data["direct_debts"].append({
                 "friend": friend,
-                "amount": rounded,
+                "amount": val,
                 "desc": desc.strip() or "Direct debt",
                 "settled": False,
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M") # Added Timestamp
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "type": ttype
             })
             persist_state()
-            st.success(f"Recorded RM {rounded:.2f} owed by {friend}.")
+            st.success(success_msg)
             st.rerun()
 
 def page_split_bill(data: dict) -> None:
@@ -248,6 +306,8 @@ def page_split_bill(data: dict) -> None:
     if not data["friends"]:
         st.warning("Add at least one friend before splitting a bill.")
         return
+        
+    st.caption("Assume you paid the bill upfront, and friends owe you their share.")
 
     total_bill = st.number_input("Total bill amount (RM)", min_value=0.0, step=0.01, format="%.2f", key="split_total")
     desc = st.text_input("Description", placeholder="e.g. Mamak Dinner", key="split_desc")
@@ -271,7 +331,7 @@ def page_split_bill(data: dict) -> None:
                 "share_per_person": share,
                 "debtors": list(selected_friends),
                 "settled": False,
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M") # Added Timestamp
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M")
             })
             persist_state()
             for key in ("split_total", "split_desc", "split_friends"):
@@ -290,11 +350,19 @@ def page_history(data: dict) -> None:
             real_idx = len(data["direct_debts"]) - 1 - idx
             col1, col2 = st.columns([5, 1])
             with col1:
-                status = "✅" if d.get("settled", False) else "🔴"
-                if d["amount"] < 0:
-                    status = "💵" # It's a payment
+                ttype = d.get("type", "lent" if d["amount"] >= 0 else "payment_received")
+                
+                if d.get("settled", False):
+                    status = "✅ Settled"
+                else:
+                    if ttype == "lent": status = "🔴 (They owe you)"
+                    elif ttype == "borrowed": status = "🟡 (You owe them)"
+                    elif ttype == "payment_received": status = "🟢 (You received)"
+                    elif ttype == "payment_made": status = "🟢 (You paid)"
+                    else: status = "⚪"
+                    
                 date_str = d.get("date", "Unknown date")
-                st.write(f"{status} **{d['friend']}** | RM {d['amount']:.2f} | '{d['desc']}' _({date_str})_")
+                st.write(f"{status} **{d['friend']}** | RM {abs(d['amount']):.2f} | '{d['desc']}' _({date_str})_")
             with col2:
                 if st.button("Delete", key=f"del_d_{real_idx}"):
                     data["direct_debts"].pop(real_idx)
@@ -310,7 +378,7 @@ def page_history(data: dict) -> None:
             real_idx = len(data["group_splits"]) - 1 - idx
             col1, col2 = st.columns([5, 1])
             with col1:
-                status = "✅" if s.get("settled", False) else "🔴"
+                status = "✅ Settled" if s.get("settled", False) else "🔴 Active"
                 debtors_str = ", ".join(s.get("debtors", []))
                 date_str = s.get("date", "Unknown date")
                 st.write(f"{status} **RM {s['total_bill']:.2f}** for '{s['description']}' _({date_str})_")
@@ -357,9 +425,9 @@ def check_password():
 def main() -> None:
     # 1. Enforce PIN Security
     if not check_password():
-        return # Stop loading the app if not authenticated
+        return 
         
-    # 2. Initialize session state for robust data handling
+    # 2. Initialize session state
     if "data" not in st.session_state:
         st.session_state.data = load_data()
         
