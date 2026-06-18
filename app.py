@@ -315,37 +315,74 @@ def page_split_bill(data: dict) -> None:
         st.warning("Add at least one friend before splitting a bill.")
         return
         
-    st.caption("Assume you paid the bill upfront, and friends owe you their share.")
+    payer_type = st.radio("Who paid the bill?", ["I paid (Friends owe me) ➡️", "A friend paid (I owe them) ⬅️"])
 
-    total_bill = st.number_input("Total bill amount (RM)", min_value=0.0, step=0.01, format="%.2f", key="split_total")
-    desc = st.text_input("Description", placeholder="e.g. Mamak Dinner", key="split_desc")
-    selected_friends = st.multiselect("Who's splitting this with you?", data["friends"], key="split_friends")
+    if "I paid" in payer_type:
+        st.caption("Assume you paid the bill upfront, and friends owe you their share.")
 
-    num_people = len(selected_friends) + 1  
-    share = round(total_bill / num_people, 2) if total_bill > 0 else 0.0
+        total_bill = st.number_input("Total bill amount (RM)", min_value=0.0, step=0.01, format="%.2f", key="split_total")
+        desc = st.text_input("Description", placeholder="e.g. Mamak Dinner", key="split_desc")
+        selected_friends = st.multiselect("Who's splitting this with you?", data["friends"], key="split_friends")
 
-    if selected_friends and total_bill > 0:
-        st.info(f"Splitting between {num_people} people (including you) → **RM {share:.2f}** each")
+        num_people = len(selected_friends) + 1  
+        share = round(total_bill / num_people, 2) if total_bill > 0 else 0.0
 
-    if st.button("Split Bill", type="primary"):
-        if total_bill <= 0:
-            st.warning("Enter a bill amount greater than zero.")
-        elif not selected_friends:
-            st.warning("Select at least one friend to split with.")
-        else:
-            data["group_splits"].append({
-                "description": desc.strip() or "Group expense",
-                "total_bill": round(total_bill, 2),
-                "share_per_person": share,
-                "debtors": list(selected_friends),
-                "settled": False,
-                "date": datetime.now().strftime("%Y-%m-%d %H:%M")
-            })
-            persist_state()
-            for key in ("split_total", "split_desc", "split_friends"):
-                del st.session_state[key]
-            st.success(f"Split saved — {len(selected_friends)} friend(s) each owe RM {share:.2f}.")
-            st.rerun()
+        if selected_friends and total_bill > 0:
+            st.info(f"Splitting between {num_people} people (including you) → **RM {share:.2f}** each")
+
+        if st.button("Split Bill", type="primary"):
+            if total_bill <= 0:
+                st.warning("Enter a bill amount greater than zero.")
+            elif not selected_friends:
+                st.warning("Select at least one friend to split with.")
+            else:
+                data["group_splits"].append({
+                    "description": desc.strip() or "Group expense",
+                    "total_bill": round(total_bill, 2),
+                    "share_per_person": share,
+                    "debtors": list(selected_friends),
+                    "settled": False,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                })
+                persist_state()
+                for key in ("split_total", "split_desc", "split_friends"):
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.success(f"Split saved — {len(selected_friends)} friend(s) each owe RM {share:.2f}.")
+                st.rerun()
+
+    else:
+        st.caption("A friend paid for the group. Calculate and log your share!")
+        
+        friend_who_paid = st.selectbox("Which friend paid?", data["friends"], key="friend_paid")
+        total_bill = st.number_input("Total bill amount (RM)", min_value=0.0, step=0.01, format="%.2f", key="friend_split_total")
+        total_people = st.number_input("Total number of people?", min_value=2, step=1, value=2, key="total_people")
+        desc = st.text_input("Description", placeholder="e.g. My share for Mamak Dinner", key="friend_split_desc")
+        
+        share = round(total_bill / total_people, 2) if total_bill > 0 else 0.0
+        
+        if total_bill > 0:
+            st.info(f"Your share of the RM {total_bill:.2f} bill ({total_people} people) is **RM {share:.2f}**")
+            
+        if st.button("Log My Share", type="primary"):
+            if total_bill <= 0:
+                st.warning("Enter a bill amount greater than zero.")
+            else:
+                val = -abs(share)
+                data["direct_debts"].append({
+                    "friend": friend_who_paid,
+                    "amount": val,
+                    "desc": desc.strip() or "My share for group bill",
+                    "settled": False,
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "type": "borrowed"
+                })
+                persist_state()
+                for key in ("friend_paid", "friend_split_total", "total_people", "friend_split_desc"):
+                    if key in st.session_state:
+                        del st.session_state[key]
+                st.success(f"Recorded that you owe RM {share:.2f} to {friend_who_paid}.")
+                st.rerun()
 
 def page_history(data: dict) -> None:
     st.header("📜 Transaction History")
