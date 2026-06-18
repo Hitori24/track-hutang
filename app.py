@@ -162,6 +162,10 @@ def page_dashboard(data: dict) -> None:
                             st.write(f"• 🔴 Lent: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
                         elif ttype == "payment_received":
                             st.write(f"• 🟢 Received: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
+                        elif ttype == "borrowed":
+                            st.write(f"• 🟡 Borrowed: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
+                        elif ttype == "payment_made":
+                            st.write(f"• 🟢 Paid: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
             with col_b:
                 msg = f"Hey {friend}! Just a friendly reminder about the RM {balance:.2f} outstanding balance. Thanks! 🙏"
                 wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
@@ -173,7 +177,11 @@ def page_dashboard(data: dict) -> None:
                 st.warning(f"🟡  You owe **{friend}** **RM {abs(balance):.2f}**")
                 with st.expander(f"Breakdown for {friend}"):
                     for desc, amount, date, ttype in friend_breakdown(data, friend):
-                        if ttype == "borrowed":
+                        if ttype in ["lent", "split"]:
+                            st.write(f"• 🔴 Lent: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
+                        elif ttype == "payment_received":
+                            st.write(f"• 🟢 Received: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
+                        elif ttype == "borrowed":
                             st.write(f"• 🟡 Borrowed: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
                         elif ttype == "payment_made":
                             st.write(f"• 🟢 Paid: **{desc}** (_{date}_) — RM {abs(amount):.2f}")
@@ -269,7 +277,7 @@ def page_add_debt(data: dict) -> None:
         return
 
     with st.form("add_debt_form", clear_on_submit=True):
-        debt_type = st.radio("Transaction Type", ["They Pay Me ➡️", "I pay them ⬅️"])
+        debt_type = st.radio("Transaction Type", ["I lent them money ➡️", "I borrowed from them ⬅️"])
         friend = st.selectbox("Friend:", data["friends"])
         amount = st.number_input("Amount (RM)", min_value=0.0, step=0.01, format="%.2f")
         desc = st.text_input("Description", placeholder="e.g. Borrowed petrol cash")
@@ -279,7 +287,7 @@ def page_add_debt(data: dict) -> None:
         if amount <= 0:
             st.warning("Amount must be greater than zero.")
         else:
-            if debt_type == "I borrowed from them ⬅️":
+            if "borrowed" in debt_type.lower():
                 val = -abs(round(amount, 2))
                 ttype = "borrowed"
                 success_msg = f"Recorded that you owe RM {abs(val):.2f} to {friend}."
