@@ -269,7 +269,7 @@ def page_add_debt(data: dict) -> None:
         return
 
     with st.form("add_debt_form", clear_on_submit=True):
-        debt_type = st.radio("Transaction Type", ["I lent them money ➡️", "I borrowed from them ⬅️"])
+        debt_type = st.radio("Transaction Type", ["They Pay Me ➡️", "I pay them ⬅️"])
         friend = st.selectbox("Friend:", data["friends"])
         amount = st.number_input("Amount (RM)", min_value=0.0, step=0.01, format="%.2f")
         desc = st.text_input("Description", placeholder="e.g. Borrowed petrol cash")
