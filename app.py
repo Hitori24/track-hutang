@@ -154,23 +154,21 @@ def page_dashboard(data: dict) -> None:
         st.caption("Nobody owes you anything right now.")
         return
 
-    with st.form("settle_up_form"):
-        friend_to_settle = st.selectbox("Select friend", debtors)
-        settle_type = st.radio("Payment Type", ["Full Settle (Marks all as paid)", "Partial Payment"])
+    # FIXED: Removed st.form here so the UI dynamically shows the amount input!
+    friend_to_settle = st.selectbox("Select friend", debtors)
+    settle_type = st.radio("Payment Type", ["Full Settle", "Partial Payment"])
+    
+    partial_amount = 0.0
+    if settle_type == "Partial Payment":
+        partial_amount = st.number_input("Amount Paid (RM)", min_value=0.01, step=1.0)
         
-        partial_amount = 0.0
-        if settle_type == "Partial Payment":
-            partial_amount = st.number_input("Amount Paid (RM)", min_value=0.01, step=1.0)
-            
-        submitted = st.form_submit_button("Confirm Payment ✅")
-
-    if submitted:
+    if st.button("Confirm Payment ✅"):
         if settle_type == "Full Settle":
             settle_friend(data, friend_to_settle)
-            st.success(f"All settled up with {friend_to_settle}.")
+            st.toast(f"All settled up with {friend_to_settle}!", icon="✅")
         else:
             record_partial_payment(data, friend_to_settle, partial_amount)
-            st.success(f"Recorded RM {partial_amount:.2f} repayment from {friend_to_settle}.")
+            st.toast(f"Recorded RM {partial_amount:.2f} repayment from {friend_to_settle}.", icon="✅")
         
         persist_state()
         st.rerun()
